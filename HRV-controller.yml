@@ -1,0 +1,178 @@
+esphome:
+  name: esp-rekuperace
+
+  includes:
+    - my_component_drf0971.h
+    
+  libraries:
+    - wire
+    - "https://github.com/DFRobot/DFRobot_GP8403"
+
+esp8266:
+  board: d1_mini
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+#api:
+#  encryption:
+#    key: "azWiGQEdN0UbjwdmFYJizz1qXFtruv0TXo2y3fkA4cc="
+
+mqtt:
+  broker: 192.168.0.3
+  #username: mqtt_user
+  #password: !secret mqtt_password
+
+ota:
+  password: "1021e9a43131b94441da946d0920eda2"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Esp-Rekuperace Fallback Hotspot"
+    password: "T3QNp0wjRYuz"
+
+captive_portal:
+
+
+
+fan:
+  - platform: speed
+    name: HRV Fan (In - debug)
+    id: HRVFanInSpeed
+    output: HRVFanIn
+    on_speed_set:
+    - logger.log: "Fan Speed was changed!"
+
+  - platform: speed
+    name: HRV Fan (Out - debug)
+    id: HRVFanOutSpeed
+    output: HRVFanOut
+    on_speed_set:
+    - logger.log: "Fan Speed was changed!"
+
+  - platform: speed
+    name: HRV Fan
+    id: HRVFanSpeed
+    output: HRVFanBoth
+    on_speed_set:
+    - logger.log: "Fan Speed was changed!"
+    
+
+
+output:
+  - platform: custom
+    outputs:
+      id: HRVFanIn
+    type: float
+    lambda: |-
+      auto output0 = new CustomDFRobot2ChDAC0_10V();
+      output0->set_out_range(10);
+      output0->set_channel(0);
+      App.register_component(output0);
+      return {output0};
+
+  - platform: custom
+    outputs:
+      id: HRVFanOut
+    type: float
+    lambda: |-
+      auto output1 = new CustomDFRobot2ChDAC0_10V();
+      App.register_component(output1);
+      output1->set_out_range(10);
+      output1->set_channel(1);
+      return {output1};
+
+  - platform: template
+    id: HRVFanBoth
+    type: float
+    write_action:
+      lambda: |-
+        if(!id(HRVSwitchAntifreeze).state) {
+          if(state != 0) {
+            auto fanCallIn = id(HRVFanInSpeed).turn_on();
+            auto fanCallOut = id(HRVFanOutSpeed).turn_on();
+            fanCallIn.set_speed(state*100);
+            fanCallOut.set_speed(state*100);
+            id(HRVSwitchAntifreeze).turn_off();
+            fanCallIn.perform();
+            fanCallOut.perform();
+          }
+          else {
+            id(HRVFanInSpeed).turn_off().perform();
+            id(HRVFanOutSpeed).turn_off().perform();
+          }
+        }
+
+sensor:
+  - platform: ntc
+    name: HRV Temperature In
+    id: HRVTempIn
+    sensor: HRVResistance
+    calibration:
+      b_constant: 3950
+      reference_temperature: 25°C
+      reference_resistance: 10kOhm
+    on_value:
+      then:
+        - lambda: |-
+            if(x<1) id(HRVSwitchAntifreezeTimer).execute();
+          #  if(x<1) id(HRVSwitchAntifreeze).turn_on();
+  - platform: resistance
+    id: HRVResistance
+    internal: true
+    sensor: HRVADC
+    configuration: UPSTREAM
+    resistor: 9.83kOhm
+  - platform: adc
+    id: HRVADC
+    internal: true
+    filters:
+      -  offset:  -0.042
+      -  multiply: 3.3
+    pin: A0
+    update_interval: never
+
+switch:
+  - platform: gpio
+    id: HRVNtcVcc
+    pin: D0
+  
+  - platform: template
+    name: "HRV Antifreeze mode"
+    id: HRVSwitchAntifreeze
+    optimistic: true
+    turn_on_action:
+      lambda: |-
+        auto fanCallIn = id(HRVFanInSpeed).turn_off();
+        auto fanCallOut = id(HRVFanOutSpeed).turn_on();
+        fanCallOut.set_speed(50);
+        fanCallIn.perform();
+        fanCallOut.perform();
+    turn_off_action:
+      lambda: |-
+        if(id(HRVSwitchAntifreeze).state) {
+          id(HRVSwitchAntifreeze).state = false;
+          if(id(HRVFanSpeed).state) id(HRVFanSpeed).turn_on().perform();
+          else id(HRVFanOutSpeed).turn_off().perform();
+        }
+        id(HRVSwitchAntifreezeTimer).stop();
+
+interval:
+  - interval: 10s
+    then:
+      - switch.turn_on: HRVNtcVcc
+      - component.update: HRVADC
+      - switch.turn_off: HRVNtcVcc
+
+script:
+  - id: HRVSwitchAntifreezeTimer
+    mode: single
+    then:
+      - switch.turn_on: HRVSwitchAntifreeze
+      - delay: 20 min
+      - switch.turn_off: HRVSwitchAntifreeze

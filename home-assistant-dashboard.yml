@@ -1,0 +1,22 @@
+title: Home
+views:
+  - path: default_view
+    title: Home
+    cards:
+      - type: tile
+        entity: fan.hrv_fan
+        icon_tap_action:
+          action: toggle
+      - type: vertical-stack
+        cards:
+          - type: entity
+            entity: sensor.hrv_temperature_in
+          - type: history-graph
+            entities:
+              - entity: sensor.hrv_temperature_in
+      - type: entities
+        entities:
+          - entity: fan.hrv_fan_in_debug
+          - entity: fan.hrv_fan_out_debug
+          - entity: switch.hrv_antifreeze_mode
+
